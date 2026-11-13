@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>O Pesadelo - Flandre Scarlet - 4 Players</title>
+    <style>
+        body { background-color: #111; color: white; text-align: center; font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+        canvas { background-color: #222; border: 4px solid #fff; box-shadow: 0 0 20px rgba(255, 0, 255, 0.5); display: none; margin: 0 auto; }
+        #menu { margin-bottom: 20px; }
+        button { padding: 15px 30px; font-size: 20px; font-weight: bold; background-color: #d11c5a; color: white; border: none; border-radius: 8px; cursor: pointer; }
+        button:hover { background-color: #ff2a75; }
+        .instrucoes { color: #aaa; font-size: 14px; margin-top: 10px; line-height: 1.5; }
+        
+        #painelRanking { background: #222; border: 2px solid #555; border-radius: 8px; width: 300px; margin: 20px auto; padding: 15px; }
+        #listaRanking { list-style: none; padding: 0; margin: 0; }
+        #listaRanking li { padding: 5px; border-bottom: 1px solid #444; font-weight: bold; color: gold; }
+    </style>
+</head>
+<body>
+
+    <div id="menu">
+        <h1>O Pesadelo - 4 Jogadores</h1>
+        <button id="btnIniciar">Iniciar Jogo</button>
+        <p class="instrucoes">
+            <b>P1:</b> Setas | <b>P2:</b> W, A, S, D<br>
+            <b>P3:</b> I, J, K, L | <b>P4:</b> T, F, G, H<br>
+            O jogo só acaba quando TODOS morrerem!
+        </p>
+
+        <div id="painelRanking">
+            <h3>🏆 TOP 5 Global</h3>
+            <ul id="listaRanking"><li>Carregando...</li></ul>
+        </div>
+    </div>
+
+    <audio id="musicaFundo" loop>
+        <source src="U_N_Owen_Was_Her.mp3" type="audio/mpeg">
+    </audio>
+
+    <canvas id="jogo" width="700" height="700"></canvas>
+
+    <script>
+        const canvas = document.getElementById('jogo');
+        const ctx = canvas.getContext('2d');
+        const btnIniciar = document.getElementById('btnIniciar');
+        const menu = document.getElementById('menu');
+        const musicaFundo = document.getElementById('musicaFundo');
+        const listaRanking = document.getElementById('listaRanking');
+
+        function carregarSprite(arquivo) {
+            const img = new Image();
+            img.src = arquivo;
+            return img;
+        }
+
+        // Sprites do Cenário, Boss e Tiro
+        const spriteFundo = carregarSprite('fundo.png');
+        const spriteBoss = carregarSprite('flandre.png');
+        const spriteTiro = carregarSprite('tiro.png');
+
+        // Sprites individuais dos 4 Jogadores
+        const spritesPlayers = {
+            1: carregarSprite('p1.png'),
+            2: carregarSprite('p2.png'),
+            3: carregarSprite('p3.png'),
+            4: carregarSprite('p4.png')
+        };
+
+        function carregarRanking() {
+            fetch('/ranking')
+                .then(res => res.json())
+                .then(top5 => {
+                    listaRanking.innerHTML = '';
+                    if (top5.length === 0) { listaRanking.innerHTML = '<li>Nenhum recorde ainda!</li>'; return; }
+                    top5.forEach((j, i) => listaRanking.innerHTML += `<li>${i + 1}º - ${j.nome}: ${j.tempo}s</li>`);
+                })
+                .catch(() => {
+                    listaRanking.innerHTML = '<li>Ranking offline</li>';
+                });
+        }
+        carregarRanking();
+
+        let jogoRodando = false, tempoSobrevivencia = 0, frameCount = 0, faseAtual = 1;
+        let corCenario = '#1a1a2e', tiros = [];
+        
+        const teclas = {};
+        document.addEventListener('keydown', e => { teclas[e.key.toLowerCase()] = true; teclas[e.key] = true; });
+        document.addEventListener('keyup', e => { teclas[e.key.toLowerCase()] = false; teclas[e.key] = false; });
+
+        let jogadores = [];
+        const boss = { x: 350, y: 150, anguloAtaque: 0, largura: 110, altura: 145 };
+
+        function criarTiro(x, y, vx, vy, raio, cor) { tiros.push({ x, y, vx, vy, raio, cor }); }
+
+        function processarAtaques() {
+            if (faseAtual === 1) {
+                if (frameCount % 20 === 0) {
+                    for (let i = 0; i < 4; i++) criarTiro(boss.x + (Math.random() - 0.5)*120, boss.y, (Math.random() - 0.5) * 4, Math.random() * 2 + 2, 8, '#ff4757');
+                }
+            } else if (faseAtual === 2) {
+                corCenario = '#2e1a1a';
+                if (frameCount % 8 === 0) {
+                    boss.anguloAtaque += 0.3;
+                    criarTiro(boss.x, boss.y, Math.cos(boss.anguloAtaque)*4, Math.sin(boss.anguloAtaque)*4, 9, '#ffa502');
+                    criarTiro(boss.x, boss.y, Math.cos(boss.anguloAtaque + Math.PI)*4, Math.sin(boss.anguloAtaque + Math.PI)*4, 9, '#ffa502');
+                }
+            } else {
+                corCenario = '#111';
+                boss.anguloAtaque -= 0.5;
+                if (frameCount % 4 === 0) criarTiro(boss.x, boss.y, Math.cos(boss.anguloAtaque)*5, Math.sin(boss.anguloAtaque)*5, 7, '#ff6b81');
+                
+                if (frameCount % 40 === 0) {
+                    let vivos = jogadores.filter(j => j.vivo);
+                    if (vivos.length > 0) {
+                        let alvo = vivos[Math.floor(Math.random() * vivos.length)];
+                        let angulo = Math.atan2(alvo.y - boss.y, alvo.x - boss.x);
+                        criarTiro(boss.x, boss.y, Math.cos(angulo)*5.5, Math.sin(angulo)*5.5, 14, '#3742fa');
+                    }
+                }
+            }
+        }
+
+        function atualizar() {
+            if (!jogoRodando) return;
+            frameCount++; tempoSobrevivencia += 1/60;
+
+            if (tempoSobrevivencia > 40) faseAtual = 3;
+            else if (tempoSobrevivencia > 20) faseAtual = 2;
+
+            boss.x = 350 + Math.sin(frameCount * 0.01) * 150;
+            boss.y = 130 + Math.cos(frameCount * 0.02) * 20;
+
+            jogadores.forEach(p => {
+                if (!p.vivo) return; 
+                if (teclas[p.controles.up] && p.y > p.spriteH / 2) p.y -= p.vel;
+                if (teclas[p.controles.down] && p.y < canvas.height - p.spriteH / 2) p.y += p.vel;
+                if (teclas[p.controles.left] && p.x > p.spriteW / 2) p.x -= p.vel;
+                if (teclas[p.controles.right] && p.x < canvas.width - p.spriteW / 2) p.x += p.vel;
+            });
+
+            processarAtaques();
+
+            for (let i = tiros.length - 1; i >= 0; i--) {
+                let t = tiros[i];
+                t.x += t.vx; t.y += t.vy;
+                
+                if (t.x < -50 || t.x > canvas.width + 50 || t.y < -50 || t.y > canvas.height + 50) { 
+                    tiros.splice(i, 1); continue; 
+                }
+
+                jogadores.forEach(p => {
+                    if (p.vivo && Math.hypot(p.x - t.x, p.y - t.y) < p.raioCol + t.raio) {
+                        p.vivo = false; 
+                    }
+                });
+            }
+
+            if (jogadores.filter(p => p.vivo).length === 0) {
+                gameOver();
+            }
+        }
+
+        function desenhar() {
+            // Desenha a imagem de fundo ou a cor sólida de emergência
+            if (spriteFundo.complete && spriteFundo.naturalWidth > 0) {
+                ctx.drawImage(spriteFundo, 0, 0, canvas.width, canvas.height);
+                
+                // Película escura leve para destacar os tiros e os jogadores sobre o cenário
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            } else {
+                ctx.fillStyle = corCenario; 
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            
+            ctx.fillStyle = 'white'; ctx.font = '20px Arial'; ctx.textAlign = 'left';
+            ctx.fillText(`Tempo: ${Math.floor(tempoSobrevivencia)}s`, 10, 30);
+            ctx.fillText(`Fase: ${faseAtual}`, canvas.width - 90, 30);
+
+            if (spriteBoss.complete && spriteBoss.naturalWidth > 0) {
+                ctx.drawImage(
+                    spriteBoss, 
+                    boss.x - boss.largura / 2, 
+                    boss.y - boss.altura / 2, 
+                    boss.largura, 
+                    boss.altura
+                );
+            } else {
+                ctx.fillStyle = '#ff3838'; ctx.beginPath(); ctx.arc(boss.x, boss.y, 40, 0, Math.PI * 2); ctx.fill();
+            }
+            
+            tiros.forEach(t => {
+                if (spriteTiro.complete && spriteTiro.naturalWidth > 0) {
+                    const tamanho = t.raio * 3;
+                    ctx.save();
+                    ctx.translate(t.x, t.y);
+                    ctx.rotate(Math.atan2(t.vy, t.vx) + Math.PI / 2);
+                    ctx.drawImage(spriteTiro, -tamanho / 2, -tamanho / 2, tamanho, tamanho);
+                    ctx.restore();
+                } else {
+                    ctx.fillStyle = t.cor; 
+                    ctx.beginPath(); 
+                    ctx.arc(t.x, t.y, t.raio, 0, Math.PI * 2); 
+                    ctx.fill();
+                }
+            });
+
+            jogadores.forEach(p => {
+                if (!p.vivo) return; 
+                
+                if (p.sprite && p.sprite.complete && p.sprite.naturalWidth > 0) {
+                    ctx.drawImage(
+                        p.sprite, 
+                        p.x - p.spriteW / 2, 
+                        p.y - p.spriteH / 2, 
+                        p.spriteW, 
+                        p.spriteH
+                    );
+                } else {
+                    ctx.fillStyle = p.cor; 
+                    ctx.beginPath(); 
+                    ctx.moveTo(p.x, p.y - 10); 
+                    ctx.lineTo(p.x - 15, p.y + 15); 
+                    ctx.lineTo(p.x + 15, p.y + 15); 
+                    ctx.fill();
+                }
+                
+                ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(p.x, p.y, p.raioCol, 0, Math.PI * 2); ctx.fill();
+            });
+        }
+
+        function loop() {
+            atualizar(); desenhar();
+            if (jogoRodando) requestAnimationFrame(loop);
+        }
+
+        function gameOver() {
+            jogoRodando = false; musicaFundo.pause();
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'red'; ctx.font = '50px Arial'; ctx.textAlign = 'center';
+            ctx.fillText("FIM DE JOGO!", canvas.width / 2, canvas.height / 2);
+            ctx.fillStyle = 'white'; ctx.font = '25px Arial';
+            ctx.fillText(`A equipe sobreviveu ${Math.floor(tempoSobrevivencia)}s`, canvas.width / 2, canvas.height / 2 + 40);
+            
+            setTimeout(() => {
+                let nome = prompt(`A equipe sobreviveu por ${Math.floor(tempoSobrevivencia)} segundos!\nDigite o nome da Equipe:`);
+                if (nome && nome.trim() !== '') {
+                    fetch('/salvar-pontuacao', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ nome: nome.trim(), tempo: tempoSobrevivencia })
+                    }).then(res => res.json()).then(top5 => { carregarRanking(); });
+                }
+                menu.style.display = 'block'; canvas.style.display = 'none'; btnIniciar.innerText = "Tentar Novamente";
+            }, 1000);
+        }
+
+        btnIniciar.addEventListener('click', () => {
+            menu.style.display = 'none'; canvas.style.display = 'block';
+            
+            musicaFundo.currentTime = 0; musicaFundo.volume = 0.5;
+            musicaFundo.play().catch(() => {});
+
+            jogadores = [
+                { id: 1, sprite: spritesPlayers[1], cor: '#a55eea', vivo: true, x: 200, y: 600, vel: 6, spriteW: 45, spriteH: 55, raioCol: 4, controles: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }},
+                { id: 2, sprite: spritesPlayers[2], cor: '#45aaf2', vivo: true, x: 300, y: 600, vel: 6, spriteW: 45, spriteH: 55, raioCol: 4, controles: { up: 'w', down: 's', left: 'a', right: 'd' }},
+                { id: 3, sprite: spritesPlayers[3], cor: '#2bcbba', vivo: true, x: 400, y: 600, vel: 6, spriteW: 45, spriteH: 55, raioCol: 4, controles: { up: 'i', down: 'k', left: 'j', right: 'l' }},
+                { id: 4, sprite: spritesPlayers[4], cor: '#fd9644', vivo: true, x: 500, y: 600, vel: 6, spriteW: 45, spriteH: 55, raioCol: 4, controles: { up: 't', down: 'g', left: 'f', right: 'h' }}
+            ];
+
+            tiros = []; tempoSobrevivencia = 0; frameCount = 0; faseAtual = 1;
+            jogoRodando = true; ctx.textAlign = 'left';
+            
+            loop();
+        });
+    </script>
+</body>
+</html>
